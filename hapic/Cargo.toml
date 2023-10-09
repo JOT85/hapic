@@ -1,0 +1,31 @@
+[package]
+name = "hapic"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "HTTP API Client (hapic): A Rust crate for quickly creating nice-to-use client libraries for HTTP APIs, in particular, there's lots of tooling around HTTP JSON APIs."
+homepage = "https://github.com/JOT85/hapic/"
+repository = "https://github.com/JOT85/hapic/"
+keywords = ["http", "json", "api"]
+categories = ["web-programming", "asynchronous"]
+readme = "../README.md"
+
+[features]
+default = ["hyper"]
+hyper = ["dep:hyper"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hyper-tls = "0.5"
+async-trait = "0.1"
+futures-core = "0.3"
+http = "0.2"
+
+[dependencies.hyper]
+version = "0.14"
+features = ["http1", "http2", "client", "runtime", "tcp"]
+optional = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
