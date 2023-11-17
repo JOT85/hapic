@@ -361,6 +361,12 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 
 pub use http;
+pub use serde_json;
+
+#[cfg(feature = "hyper")]
+pub use hyper;
+#[cfg(feature = "hyper")]
+pub use hyper_tls;
 
 use http::{
     header::{self, HeaderMap, HeaderValue},
@@ -370,7 +376,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod transport;
 
-#[cfg(feature="hyper")]
+#[cfg(feature = "hyper")]
 /// Macro for generating the client and ApiCall type.
 ///
 /// If you're defining JSON API calls at the same time, you can use [`json_api`] instead.
@@ -446,7 +452,7 @@ macro_rules! client {
         $(#[$trait_meta])*
         $trait_vis trait $ApiCall: $crate::RawApiCall {}
 
-        impl $Client<hyper::Body, $crate::transport::HttpsTransport> {
+        impl $Client<$crate::hyper::Body, $crate::transport::HttpsTransport> {
             /// Create a new client to the provided endpoint, using `hyper` and `HttpsTransport`.
             pub fn new(endpoint: std::borrow::Cow<'static, str>) -> Self {
                 $Client {
@@ -471,7 +477,7 @@ macro_rules! client {
     };
 }
 
-#[cfg(not(feature="hyper"))]
+#[cfg(not(feature = "hyper"))]
 /// Macro for generating the client and ApiCall type.
 ///
 /// If you're defining JSON API calls at the same time, you can use [`json_api`] instead.
@@ -716,12 +722,18 @@ macro_rules! json_api_call {
 
             fn parse_json_response(
                 status: $crate::http::StatusCode,
-                resp: serde_json::Result<Self::JsonResponse>,
+                content_type: Option<$crate::http::HeaderValue>,
+                raw_resp: Vec<u8>,
+                resp: $crate::serde_json::Result<Self::JsonResponse>,
             ) -> std::result::Result<$Output, $crate::Error> {
                 if status.is_success() {
                     Ok(resp?.try_into()?)
                 } else {
-                    Err($crate::Error::HttpStatusNotSuccess(status))
+                    Err($crate::Error::HttpStatusNotSuccess{
+                        status,
+                        content_type,
+                        body: raw_resp,
+                    })
                 }
             }
         }
@@ -803,10 +815,15 @@ impl<B, T: Transport<B>> Client<B, T> {
 #[derive(Debug)]
 pub enum Error {
     Json(serde_json::Error),
-    #[cfg(feature="hyper")]
+    #[cfg(feature = "hyper")]
     Hyper(hyper::Error),
-    HttpStatusNotSuccess(http::StatusCode),
+    HttpStatusNotSuccess {
+        status: http::StatusCode,
+        content_type: Option<http::HeaderValue>,
+        body: Vec<u8>,
+    },
     HttpNoBody,
+    Other(Cow<'static, str>),
 }
 
 macro_rules! error_from {
@@ -887,12 +904,18 @@ impl<T: SimpleApiCall> JsonApiCall for T {
 
     fn parse_json_response(
         status: StatusCode,
+        content_type: Option<http::HeaderValue>,
+        raw_resp: Vec<u8>,
         resp: serde_json::Result<Self::Output>,
     ) -> Result<Self::Output, Error> {
         if status.is_success() {
             Ok(resp?)
         } else {
-            Err(Error::HttpStatusNotSuccess(status))
+            Err(Error::HttpStatusNotSuccess {
+                status,
+                content_type,
+                body: raw_resp,
+            })
         }
     }
 }
@@ -936,6 +959,8 @@ pub trait JsonApiCall: Sized + Send {
     /// Convert a [`Self::JsonResponse`], as received from the server, into [`Self::Output`].
     fn parse_json_response(
         status: StatusCode,
+        content_type: Option<http::HeaderValue>,
+        raw_resp: Vec<u8>,
         resp: serde_json::Result<Self::JsonResponse>,
     ) -> Result<Self::Output, Error>;
 }
@@ -967,6 +992,7 @@ impl<T: JsonApiCall> ApiCall for T {
 
     async fn response<B: ResponseBody>(resp: http::Response<B>) -> Result<Self::Output, Error> {
         let status = resp.status();
+        let content_type = resp.headers().get("Content-Type").cloned();
         let body_bytes = resp
             .into_body()
             .read_all()
@@ -974,7 +1000,7 @@ impl<T: JsonApiCall> ApiCall for T {
             .map_err(|err| err.into())?;
         let resp: serde_json::Result<<Self as JsonApiCall>::JsonResponse> =
             serde_json::from_slice(body_bytes.as_ref());
-        <Self as JsonApiCall>::parse_json_response(status, resp)
+        <Self as JsonApiCall>::parse_json_response(status, content_type, body_bytes.into(), resp)
     }
 }
 
