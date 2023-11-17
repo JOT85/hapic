@@ -7,6 +7,12 @@ struct Add {
 }
 
 #[derive(Serialize)]
+struct AddDodgy {
+    a: u32,
+    b: u32,
+}
+
+#[derive(Serialize)]
 struct Sub {
     a: u32,
     b: u32,
@@ -20,6 +26,12 @@ struct Factorial {
 #[derive(Deserialize, PartialEq, Eq, Debug)]
 struct Output {
     c: u64,
+}
+
+#[derive(Serialize)]
+struct Never {
+    a: u32,
+    b: u32,
 }
 
 impl From<Output> for u64 {
@@ -70,8 +82,10 @@ json_api!(
 
     simple {
         "/add": Add => Output;
+        "/add/dodgy": AddDodgy => Output;
         "/sub": Sub => Output;
         "/factorial": Factorial => Output;
+        "/503": Never => Output;
     }
 
     json {
@@ -155,4 +169,74 @@ async fn test() {
         .await
         .unwrap();
     assert_eq!(output, 6);
+}
+
+#[tokio::test]
+async fn test_errors() {
+    let client = TestClient::new(std::borrow::Cow::Borrowed("http://localhost:8000"));
+    let mut seen_200 = false;
+    let mut seen_503 = false;
+    for resp in
+        futures::future::join_all((0..16).map(|_| client.call(AddDodgy { a: 1, b: 2 }))).await
+    {
+        match resp {
+            Err(crate::Error::HttpStatusNotSuccess { status, .. }) if status == 503 => {
+                seen_503 = true
+            }
+            Ok(resp) if resp == Output { c: 3 } => seen_200 = true,
+            resp => panic!("got unexpected API result: {resp:?}"),
+        }
+    }
+    assert!(seen_200);
+    assert!(seen_503);
+}
+
+#[tokio::test]
+async fn test_retry() {
+    use std::time::{Duration, Instant};
+
+    use crate::transport::RetryConfig;
+
+    let client = TestClient {
+        client: crate::Client::new_https_retry_client(
+            std::borrow::Cow::Borrowed("http://localhost:8000"),
+            RetryConfig::new(Duration::from_secs(1), Duration::from_secs(1), 3),
+        ),
+    };
+
+    assert!(matches!(
+        client.call(AddDodgy { a: 1, b: 2 }).await,
+        Ok(Output { c: 3 })
+    ));
+
+    // After success, it should fail exactly 3 times:
+    let start = Instant::now();
+    assert!(matches!(
+        client.call(AddDodgy { a: 1, b: 2 }).await,
+        Ok(Output { c: 3 })
+    ));
+    let time_taken = Instant::now().duration_since(start);
+    assert_eq!(time_taken.as_secs(), 3);
+
+    // After success, it should fail exactly 3 times again:
+    let start = Instant::now();
+    assert!(matches!(
+        client.call(AddDodgy { a: 1, b: 2 }).await,
+        Ok(Output { c: 3 })
+    ));
+    let time_taken = Instant::now().duration_since(start);
+    assert_eq!(time_taken.as_secs(), 3);
+
+    // Now we'll check that we do hit the retry limit:
+    let start = Instant::now();
+    assert!(matches!(
+        dbg!(client.call(Never { a: 1, b: 2 }).await),
+        Err(crate::Error::HttpStatusNotSuccess {
+            status: hyper::StatusCode::SERVICE_UNAVAILABLE,
+            content_type: _,
+            body: _,
+        })
+    ));
+    let time_taken = Instant::now().duration_since(start);
+    assert_eq!(time_taken.as_secs(), 3);
 }

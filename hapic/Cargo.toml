@@ -1,6 +1,6 @@
 [package]
 name = "hapic"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "HTTP API Client (hapic): A Rust crate for quickly creating nice-to-use client libraries for HTTP APIs, in particular, there's lots of tooling around HTTP JSON APIs."
@@ -31,3 +31,4 @@ optional = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+futures = "0.3"

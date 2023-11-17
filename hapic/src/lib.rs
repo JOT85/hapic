@@ -793,6 +793,23 @@ impl Client<hyper::Body, transport::HttpsTransport> {
             extra_headers: HeaderMap::new(),
         }
     }
+
+    /// Create a new client using [`transport::HttpsRetryTransport`] and [`hyper::Body`].
+    pub fn new_https_retry_client(
+        endpoint: Cow<'static, str>,
+        retry_config: transport::retry::RetryConfig,
+    ) -> Client<Vec<u8>, transport::HttpsRetryTransport> {
+        Client {
+            transport: transport::RetryTransport::new(
+                hyper::Client::builder().build(hyper_tls::HttpsConnector::new()),
+                retry_config,
+            ),
+            phantom_body: PhantomData,
+            endpoint,
+            authorization: None,
+            extra_headers: HeaderMap::new(),
+        }
+    }
 }
 
 impl<B, T: Transport<B>> Client<B, T> {
